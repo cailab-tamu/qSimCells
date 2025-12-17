@@ -230,28 +230,48 @@ import numpy as np
 
 
 
-def plot_measurement_histograms(circuit: QuantumCircuit, nshots: int = 1000, title_prefix: str = "", figure_save_name: str = None, figsize: Tuple[int, int] = (12, 5)
+def plot_measurement_histograms(
+    circuit: QuantumCircuit,
+    nshots: int = 1000,
+    backend=None,
+    title_prefix: str = "",
+    figure_save_name: str = None,
+    figsize: Tuple[int, int] = (12, 5)
 ):
     """
-    Simulates the given circuit and plots histograms for its classical registers
-    (c_measure1 and c_measure2) side-by-side. The plots are displayed interactively
-    and can optionally be saved to a file.
+    Runs the given circuit on a specified Qiskit backend (simulator or hardware)
+    and plots measurement histograms for its classical registers 'c_measure1'
+    and 'c_measure2' side-by-side.
 
     Args:
-        circuit (QuantumCircuit): The Qiskit QuantumCircuit to simulate and plot.
-                                  It must have classical registers named 'c_measure1' and 'c_measure2'.
-        nshots (int): The number of shots for the simulation. Defaults to 1000.
-        title_prefix (str): A prefix to add to the overall figure title (e.g., "Final Circuit").
-        figure_save_name (str, optional): If provided, the figure will be saved to this filename.
-                                          Defaults to None (figure only displayed interactively).
+        circuit (QuantumCircuit): The circuit to execute and plot. Should contain classical registers
+                                  named 'c_measure1' and 'c_measure2'.
+        nshots (int, optional): Number of shots (circuit runs). Defaults to 1000.
+        backend (optional): Qiskit backend to run the circuit (e.g. AerSimulator, or IBM/Q device).
+                            If None, uses AerSimulator by default.
+        title_prefix (str, optional): Prefix for the figure title.
+        figure_save_name (str, optional): If provided, saves the figure to this filename.
+        figsize (tuple, optional): Figure size in inches. Default is (12, 5).
+
+    Returns:
+        Tuple (counts_measure1, counts_measure2): Measured bitstring counts for both registers.
+
+    Notes:
+        - If 'c_measure1' or 'c_measure2' registers are missing, their count/histogram will be skipped.
+        - To run on hardware, pass a backend instance provisioned through Qiskit.
     """
-    print(f"\n--- Simulating and Plotting Histograms for: {title_prefix} ---")
 
-    # 1. Simulate the circuit
-    backend = AerSimulator()
-    pm = generate_preset_pass_manager(backend=backend, optimization_level=3)
-    qc_comp = pm.run(circuit)
-
+    print(f"\n--- Running circuit for: {title_prefix} ---")
+    # 1. Select backend
+    if backend is None:
+        backend = AerSimulator()
+    # transpile if using AerSimulator (for real hardware, sometimes needed as well)
+    try:
+        pm = generate_preset_pass_manager(backend=backend, optimization_level=3)
+        qc_comp = pm.run(circuit)
+    except Exception:
+        # Fallback if not available for the backend (some HW backends)
+        qc_comp = circuit
     sampler = Sampler(mode=backend)
     job = sampler.run([qc_comp], shots=nshots)
 
@@ -315,3 +335,19 @@ def plot_measurement_histograms(circuit: QuantumCircuit, nshots: int = 1000, tit
         print(f"An unexpected error occurred during simulation or plotting: {e}")
     
     return counts_measure1, counts_measure2
+
+def get_best_quantum_backend(required_qubits=5):
+    from qiskit_ibm_runtime import QiskitRuntimeService
+    service = QiskitRuntimeService()
+    backends = service.backends(simulator=False, operational=True)
+    candidates = [
+        b for b in backends
+        if hasattr(b, "configuration") and hasattr(b, "status")
+           and b.configuration().n_qubits >= required_qubits
+           and b.status().operational
+    ]
+    if not candidates:
+        raise RuntimeError(f"No quantum backend has >= {required_qubits} qubits.")
+    # sort by pending jobs (use .status().pending_jobs)
+    candidates.sort(key=lambda b: b.status().pending_jobs)
+    return candidates[0]
