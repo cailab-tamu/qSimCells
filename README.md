@@ -49,7 +49,7 @@ qSimCells/
 1. **Clone this repository or download as zip:**
 
     ```sh
-    git clone https://github.com/YOUR_GITHUB_USER/qSimCells.git
+    git clone git@github.com:cailab-tamu/qSimCells.git
     cd qSimCells
     ```
 
@@ -161,7 +161,7 @@ Jupyter notebook `qSim_cell_chat.ipynb`, simulating, merging, and visualizing si
 If you use this pipeline in your research, please cite:
 
 > Selim Romero, et al.  
-> Quantum-inspired synthetic single-cell analysis.  
+> Quantum Generative Modeling of Single-Cell Transcriptomics: Capturing Gene-Gene and Cell-Cell Interactions.  
 > [arXiv:2510.12776](https://www.arxiv.org/abs/2510.12776)
 
 ---
@@ -169,7 +169,7 @@ If you use this pipeline in your research, please cite:
 ## Contact
 
 Questions?  
-Open an issue or email **Selim Romero** (ssromerogon@tamu.edu).
+Open an issue or email **James J. Cai** (jcai@tamu.edu) | **Selim Romero** (ssromerogon@tamu.edu).
 
 ---
 
