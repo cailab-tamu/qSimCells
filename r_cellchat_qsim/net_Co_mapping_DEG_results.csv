@@ -1,0 +1,9 @@
+source,target,ligand,receptor,prob,pval,interaction_name,interaction_name_2,pathway_name,annotation,evidence,datasets,source.ligand,target.receptor,ligand.pvalues,ligand.logFC,ligand.pct.1,ligand.pct.2,receptor.pvalues,receptor.logFC,receptor.pct.1,receptor.pct.2
+CellType1,CellType2,g3,g5,0.0148,0,1,g3 - g5 (Simulated),Simulated1,Secreted Signaling,Simulated1,Mo,CellType1.g3,CellType2.g5,NA,NA,NA,NA,NA,NA,NA,NA
+CellType2,CellType1,g7,g0,0.0011,0,2,g7 - g0 (Simulated),Simulated2,Secreted Signaling,Simulated2,Mo,CellType2.g7,CellType1.g0,NA,NA,NA,NA,NA,NA,NA,NA
+CellType2,CellType1,g8,g4,0.1133,0,3,g8 - g4 (Simulated),Simulated3,Secreted Signaling,Simulated3,Mo,CellType2.g8,CellType1.g4,NA,NA,NA,NA,NA,NA,NA,NA
+CellType2,CellType1,g9,g4,0.0726,0,4,g9 - g4 (Simulated),Simulated4,Secreted Signaling,Simulated4,Mo,CellType2.g9,CellType1.g4,NA,NA,NA,NA,NA,NA,NA,NA
+CellType1,CellType2,g3,g5,0.1135,0,1,g3 - g5 (Simulated),Simulated1,Secreted Signaling,Simulated1,Co,CellType1.g3,CellType2.g5,NA,NA,NA,NA,NA,NA,NA,NA
+CellType2,CellType1,g7,g0,0.0830,0,2,g7 - g0 (Simulated),Simulated2,Secreted Signaling,Simulated2,Co,CellType2.g7,CellType1.g0,NA,NA,NA,NA,NA,NA,NA,NA
+CellType2,CellType1,g8,g4,0.1008,0,3,g8 - g4 (Simulated),Simulated3,Secreted Signaling,Simulated3,Co,CellType2.g8,CellType1.g4,NA,NA,NA,NA,NA,NA,NA,NA
+CellType2,CellType1,g9,g4,0.0638,0,4,g9 - g4 (Simulated),Simulated4,Secreted Signaling,Simulated4,Co,CellType2.g9,CellType1.g4,NA,NA,NA,NA,NA,NA,NA,NA

@@ -1,0 +1,11 @@
+qSimCells/
+│
+├── environment.yml
+├── qsim_cell_chat.ipynb
+├── README.md
+├── pyproject.toml    
+│
+└── qsim_cells/        
+      ├── __init__.py
+      └── generative.py 
+      └── grn_utils.py 

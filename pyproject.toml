@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qsim_cells"
+version = "0.1.0"
+authors = [
+    { name = "Selim Romero", email = "ssromerogon@tamu.edu" }
+]
+description = "Quantum simulation tools for single-cell synthetic data generation."
+readme = "README.md"
+requires-python = "==3.10.*"
+dependencies = [
+    "numpy==1.26.4",
+    "scipy",
+    "scanpy",
+    "pandas",
+    "matplotlib",
+    "scikit-learn",
+    "qiskit==2.1",
+    "qiskit-ibm-runtime",
+    "pylatexenc",
+    "pillow",
+    "qiskit-aer",
+    "qiskit-optimization",
+    "leidenalg",
+    "igraph"
+]
+
+[project.optional-dependencies]
+notebook = [
+    "ipykernel",
+    "ipywidgets",
+    "jupyter",
+    "notebook"
+]
+
+[tool.setuptools.packages.find]
+include = ["qsim_cells*"]

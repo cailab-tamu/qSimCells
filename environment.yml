@@ -1,0 +1,27 @@
+name: qsim_cells_env
+
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy=1.26.4
+  - leidenalg
+  - igraph
+  - scipy
+  - scanpy
+  - pandas
+  - matplotlib
+  - scikit-learn
+  - qiskit=2.1
+  - qiskit-ibm-runtime
+  - ipykernel
+  - ipywidgets
+  - jupyter
+  - notebook
+  - pylatexenc    # Recommended for some Qiskit visualizations
+  - tk            # Recommended for some Qiskit visualizations
+  - Pillow  
+  - pip
+  - pip:
+    - qiskit_aer
+    - qiskit-optimization
