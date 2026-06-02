@@ -15,6 +15,7 @@ from qiskit.visualization import plot_histogram
 from qiskit_aer import AerSimulator
 
 
+
 def create_rotation_circuit(angles_list: list[float]) -> QuantumCircuit:
     """
     Initializes a quantum circuit by applying a rotation gate with a
@@ -236,7 +237,8 @@ def plot_measurement_histograms(
     backend=None,
     title_prefix: str = "",
     figure_save_name: str = None,
-    figsize: Tuple[int, int] = (12, 5)
+    figsize: Tuple[int, int] = (12, 5),
+    seed: int = None
 ):
     """
     Runs the given circuit on a specified Qiskit backend (simulator or hardware)
@@ -248,8 +250,9 @@ def plot_measurement_histograms(
                                   named 'c_measure1' and 'c_measure2'.
         nshots (int, optional): Number of shots (circuit runs). Defaults to 1000.
         backend (optional): Qiskit backend to run the circuit (e.g. AerSimulator, or IBM/Q device).
-                            If None, uses AerSimulator by default.
+                            If None, uses AerSimulator with seed_simulator=seed.
         title_prefix (str, optional): Prefix for the figure title.
+        seed (int, optional): Random seed passed to AerSimulator when backend is None. Defaults to None.
         figure_save_name (str, optional): If provided, saves the figure to this filename.
         figsize (tuple, optional): Figure size in inches. Default is (12, 5).
 
@@ -264,7 +267,7 @@ def plot_measurement_histograms(
     print(f"\n--- Running circuit for: {title_prefix} ---")
     # 1. Select backend
     if backend is None:
-        backend = AerSimulator()
+        backend = AerSimulator(seed_simulator=seed)
     # transpile if using AerSimulator (for real hardware, sometimes needed as well)
     try:
         pm = generate_preset_pass_manager(backend=backend, optimization_level=3)
