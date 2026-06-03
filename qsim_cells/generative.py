@@ -1,12 +1,6 @@
-import sys
-import os
-import math
 import numpy as np
-import pandas as pd
-import anndata as ad
 from scipy.stats import nbinom
-import scanpy as sc
-from typing import Tuple
+from typing import Tuple, Union
 import matplotlib.pyplot as plt
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
@@ -15,220 +9,189 @@ from qiskit.visualization import plot_histogram
 from qiskit_aer import AerSimulator
 
 
-
-def create_rotation_circuit(angles_list: list[float]) -> QuantumCircuit:
+def create_rotation_circuit(angles: list) -> QuantumCircuit:
     """
-    Initializes a quantum circuit by applying a rotation gate with a
-    specified angle to each qubit. The number of qubits is determined
-    by the length of the angles_list.
+    Initialises a quantum circuit by applying an Ry rotation gate to each qubit.
+    The number of qubits equals len(angles).
 
-    Args:
-        angles_list (list[float]): A list of rotation angles in radians,
-                                   one for each qubit.
+    Parameters
+    ----------
+    angles : list[float]
+        Rotation angles in radians, one per qubit.
+        Tip: pass np.array([0.2, 0.5, ...]) * np.pi to keep angles as pi-fractions.
 
-    Returns:
-        QuantumCircuit: The initialized quantum circuit.
+    Returns
+    -------
+    QuantumCircuit
+        Circuit with Ry(angle) applied to each qubit. No measurements.
     """
-    # The number of qubits is determined by the length of the angles list.
-    num_qubits = len(angles_list)
-    
-    # Create a quantum register with the specified number of qubits.
-    qr = QuantumRegister(num_qubits, name='q')
-    
-    # Create a quantum circuit with the quantum register.
+    qr = QuantumRegister(len(angles), name='q')
     circuit = QuantumCircuit(qr)
-
-    for i in range(num_qubits):
-        circuit.ry(angles_list[i], qr[i])
-        
+    for i, angle in enumerate(angles):
+        circuit.ry(angle, qr[i])
     return circuit
 
-def concatenate_circuits_with_separate_measurements(circ1: QuantumCircuit, circ2: QuantumCircuit) -> QuantumCircuit:
+
+def concatenate_circuits_with_separate_measurements(
+    circ1: QuantumCircuit,
+    circ2: QuantumCircuit
+) -> QuantumCircuit:
     """
-    Concatenates two QuantumCircuit objects onto disjoint sets of qubits
-    within a larger circuit and adds separate classical registers for measurement
-    of each original circuit's qubits.
+    Places two circuits on disjoint qubit registers and adds two separate
+    classical registers (c_measure1, c_measure2) for independent readout.
 
-    Args:
-        circ1 (QuantumCircuit): The first quantum circuit.
-        circ2 (QuantumCircuit): The second quantum circuit.
+    Parameters
+    ----------
+    circ1, circ2 : QuantumCircuit
+        The two cell-type circuits (no measurements required).
 
-    Returns:
-        QuantumCircuit: A new circuit combining circ1 and circ2 on separate
-                        qubits, with two distinct classical registers for measurements.
+    Returns
+    -------
+    QuantumCircuit
+        Combined circuit; no gates or measurements added beyond the two inputs.
     """
-    ng_circ1 = circ1.num_qubits
-    ng_circ2 = circ2.num_qubits
-    num_total_qubits = ng_circ1 + ng_circ2
-
-    qr_all = QuantumRegister(num_total_qubits, name='q')
-    cr_measure1 = ClassicalRegister(ng_circ1, name='c_measure1')
-    cr_measure2 = ClassicalRegister(ng_circ2, name='c_measure2')
-
+    n1, n2 = circ1.num_qubits, circ2.num_qubits
+    qr_all      = QuantumRegister(n1 + n2, name='q')
+    cr_measure1 = ClassicalRegister(n1, name='c_measure1')
+    cr_measure2 = ClassicalRegister(n2, name='c_measure2')
     circ_all = QuantumCircuit(qr_all, cr_measure1, cr_measure2)
-
-    # Compose circ1 onto the first set of qubits
-    circ_all.compose(circ1, qubits=range(ng_circ1), inplace=True)
-
-    # Compose circ2 onto the next set of qubits
-    circ_all.compose(circ2, qubits=range(ng_circ1, num_total_qubits), inplace=True)
-
+    circ_all.compose(circ1, qubits=range(n1),          inplace=True)
+    circ_all.compose(circ2, qubits=range(n1, n1 + n2), inplace=True)
     return circ_all
 
 
-
-def add_cnots_and_measurements_to_circuit(
+def add_crx_and_measurements_to_circuit(
     base_circuit: QuantumCircuit,
     circ1_num_qubits: int,
-    global_cnot_configurations: list[tuple[int, int]]
+    interaction_map: list,
+    crx_angle: Union[float, list] = np.pi
 ) -> QuantumCircuit:
     """
-    Applies a specified list of CNOT gates (using global qubit indices)
-    and then adds measurements to the circuit.
+    Applies CRX(theta) gates for each (control, target) pair in interaction_map,
+    then measures both cell-type registers.
 
-    Args:
-        base_circuit (QuantumCircuit): The circuit already containing the two
-                                        chunks composed on disjoint qubits.
-                                        This circuit should NOT have measurements yet.
-        circ1_num_qubits (int): The number of qubits in the first chunk.
-                                This is used to determine the classical register split.
-        global_cnot_configurations (list[tuple[int, int]]): A list of tuples, where each tuple
-                                                      (global_control_idx, global_target_idx)
-                                                      specifies a CNOT gate using global qubit indices.
+    CRX(theta) is the controlled-RX rotation gate:
 
-    Returns:
-        QuantumCircuit: A new circuit with the specified CNOTs and measurements added.
+      crx_angle = np.pi        -> CRX(pi) == CX  (real amplitudes, classically simulable)
+      crx_angle = np.pi / 2    -> partial entanglement with complex amplitudes
+      Any other value           -> complex amplitudes outside the non-negative real regime,
+                                   going beyond the classically simulable Ry+CX family.
+
+    Parameters
+    ----------
+    base_circuit : QuantumCircuit
+        Output of concatenate_circuits_with_separate_measurements (no measurements yet).
+    circ1_num_qubits : int
+        Number of qubits belonging to Cell Type 1 (determines classical register split).
+    interaction_map : list of (int, int)
+        Ordered list of (control_qubit, target_qubit) pairs using global qubit indices.
+        Gates are applied in the order listed -- ordering matters when qubits are shared.
+    crx_angle : float or list of float, default np.pi
+        Rotation angle(s) for the CRX gates in radians.
+          - Single float  -> same angle applied to every gate.
+          - List of float -> one angle per gate (must match len(interaction_map)).
+        Tip: pass np.array([0.5, 1.0, ...]) * np.pi to specify as pi-fractions.
+
+    Returns
+    -------
+    QuantumCircuit
+        New circuit with CRX gates and measurements appended.
+
+    Raises
+    ------
+    ValueError
+        If qubit indices are out of range, control == target, or the angle list
+        length does not match interaction_map.
     """
-    circuit_with_cnots = base_circuit.copy()
+    # Normalise crx_angle to a per-gate list
+    if isinstance(crx_angle, (int, float, np.floating)):
+        angles = [float(crx_angle)] * len(interaction_map)
+    else:
+        angles = list(crx_angle)
+        if len(angles) != len(interaction_map):
+            raise ValueError(
+                f"crx_angle list length ({len(angles)}) must match "
+                f"interaction_map length ({len(interaction_map)})."
+            )
 
-    qr_all = circuit_with_cnots.qregs[0]
-    cr_measure1 = circuit_with_cnots.cregs[0]
-    cr_measure2 = circuit_with_cnots.cregs[1]
+    circuit  = base_circuit.copy()
+    qr_all   = circuit.qregs[0]
+    n_total  = circuit.num_qubits
 
-    for control_q, target_q in global_cnot_configurations:
-        # Add checks to ensure indices are valid within the combined circuit
-        if not (0 <= control_q < circuit_with_cnots.num_qubits and
-                0 <= target_q < circuit_with_cnots.num_qubits and
-                control_q != target_q):
-            raise ValueError(f"Invalid CNOT indices: ({control_q}, {target_q}). Qubits must be valid and distinct.")
+    for (ctrl, tgt), angle in zip(interaction_map, angles):
+        if not (0 <= ctrl < n_total and 0 <= tgt < n_total and ctrl != tgt):
+            raise ValueError(
+                f"Invalid gate pair ({ctrl}, {tgt}): indices must be in "
+                f"[0, {n_total}) and control != target."
+            )
+        circuit.crx(angle, qr_all[ctrl], qr_all[tgt])
 
-        circuit_with_cnots.cx(qr_all[control_q], qr_all[target_q])
-        #circuit_with_cnots.cy(qr_all[control_q], qr_all[target_q])
+    # Measurements
+    circuit.measure(qr_all[:circ1_num_qubits],  circuit.cregs[0])
+    circuit.measure(qr_all[circ1_num_qubits:],  circuit.cregs[1])
+    return circuit
 
-    # Add measurements after all CNOTs are applied
-    circuit_with_cnots.measure(qr_all[0:circ1_num_qubits], cr_measure1)
-    circuit_with_cnots.measure(qr_all[circ1_num_qubits:circuit_with_cnots.num_qubits], cr_measure2)
 
-    return circuit_with_cnots
-
-def add_crx_gates_and_measurements_to_circuit(
-    base_circuit: QuantumCircuit,
-    circ1_num_qubits: int,
-    crx_configurations: list[tuple[int, int]], # List of (control, target) global indices
-    angles: list[float] # List of angles corresponding to each CRX
-) -> QuantumCircuit:
+def create_binary_matrix(joint_counts: dict) -> np.ndarray:
     """
-    Applies a specified list of CRX gates (controlled-RX) with given angles
-    and then adds measurements to the circuit.
+    Expands a Qiskit bitstring-count dictionary into a binary cell x gene matrix.
 
-    Args:
-        base_circuit (QuantumCircuit): The circuit already containing the two
-                                        chunks composed on disjoint qubits.
-                                        This circuit should NOT have measurements yet.
-        circ1_num_qubits (int): The number of qubits in the first chunk.
-                                This is used to determine the classical register split.
-        crx_configurations (list[tuple[int, int]]): A list of (control_q, target_q) global qubit
-                                                     indices defining where CRX gates will be placed.
-        angles (list[float]): A list of rotation angles for each CRX gate,
-                              corresponding to the order in `crx_configurations`.
+    Each row is one simulated cell (one shot); each column is a gene.
+    Bit order is reversed so that qubit 0 maps to column 0 (gene 0).
 
-    Returns:
-        QuantumCircuit: A new circuit with the specified CRX gates and measurements added.
-    """
-    circuit_with_crx = base_circuit.copy()
-    qr_all = circuit_with_crx.qregs[0]
-    cr_measure1 = circuit_with_crx.cregs[0]
-    cr_measure2 = circuit_with_crx.cregs[1]
+    Parameters
+    ----------
+    joint_counts : dict
+        Bitstring -> count mapping from result.data.<register>.get_counts().
 
-    if len(crx_configurations) != len(angles):
-        raise ValueError("Number of CRX configurations must match the number of angles.")
-
-    for i, (control_q, target_q) in enumerate(crx_configurations):
-        # Add checks for valid indices
-        if not (0 <= control_q < circuit_with_crx.num_qubits and
-                0 <= target_q < circuit_with_crx.num_qubits and
-                control_q != target_q):
-            raise ValueError(f"Invalid CRX indices: ({control_q}, {target_q}). Qubits must be valid and distinct.")
-        
-        #circuit_with_crx.append(CRXGate(angles[i]), [qr_all[control_q], qr_all[target_q]])
-        circuit_with_crx.crx(angles[i], qr_all[control_q], qr_all[target_q]) 
-
-    # Add measurements after all CRX gates are applied
-    circuit_with_crx.measure(qr_all[0:circ1_num_qubits], cr_measure1)
-    circuit_with_crx.measure(qr_all[circ1_num_qubits:circuit_with_crx.num_qubits], cr_measure2)
-
-    return circuit_with_crx
-
-def create_binary_matrix(joint_counts: dict):
-    """
-    Generates a binary matrix from a joint histogram dictionary with 0s and 1s.
-
-    Args:
-        joint_counts (dict): A dictionary where keys are bit strings
-                             (representing rows) and values are their counts.
-
-    Returns:
-        np.ndarray: A reconstructed binary matrix with integer values.
+    Returns
+    -------
+    np.ndarray of shape (total_shots, n_genes), dtype int
     """
     if not joint_counts:
         return np.array([], dtype=int).reshape(0, 0)
-    
-    # Get the number of genes (columns) from the length of the first key
-    first_key = next(iter(joint_counts.keys()))
-    num_genes = len(first_key)
-    
-    reconstructed_rows = []
+    n_genes = len(next(iter(joint_counts)))
+    rows = []
+    for bitstring, count in joint_counts.items():
+        row = [int(b) for b in reversed(bitstring)]   # qubit-0 -> column 0
+        rows.extend([row] * count)
+    return np.array(rows, dtype=int)
 
-    # Iterate through the joint counts
-    for bit_string, count in joint_counts.items():
-        # Reverse the bit string to align with the original g0, g1, ... order
-        reversed_bit_string = bit_string[::-1]
-        
-        # Convert the reversed bit string to a list of integer values (0 or 1)
-        row_values = [int(char) for char in reversed_bit_string]
-        
-        # Repeat the row 'count' number of times
-        for _ in range(count):
-            reconstructed_rows.append(row_values)
-            
-    # Convert the list of lists into a NumPy array with integer dtype
-    return np.array(reconstructed_rows, dtype=int)
 
-# --- Re-using the gene count matrix function for demonstration ---
-def create_count_matrix_nbinom(binary_matrix: np.ndarray, mu_vector: np.ndarray, r_vector: np.ndarray):
+def create_count_matrix_nbinom(
+    binary_matrix: np.ndarray,
+    mu_vector: np.ndarray,
+    r_vector: np.ndarray
+) -> np.ndarray:
     """
-    Creates a count matrix from a binary matrix using a Negative Binomial distribution
-    with gene-specific mean and dispersion parameters.
+    Converts a binary activation matrix into overdispersed count data by
+    sampling from a Negative Binomial distribution for each active (1) entry.
+
+      X_ij = NB(r_j, p_j)  if binary_matrix[i,j] == 1,  else 0
+      where p_j = r_j / (mu_j + r_j).
+
+    Parameters
+    ----------
+    binary_matrix : np.ndarray, shape (n_cells, n_genes)
+    mu_vector     : np.ndarray, shape (n_genes,)  -- mean expression per gene
+    r_vector      : np.ndarray, shape (n_genes,)  -- dispersion parameter per gene
+
+    Returns
+    -------
+    np.ndarray of shape (n_cells, n_genes), dtype int32
     """
-    num_cells, num_genes = binary_matrix.shape
-    
-    if len(mu_vector) != num_genes or len(r_vector) != num_genes:
-        raise ValueError("The length of mu_vector and r_vector must match the number of genes.")
-        
-    count_matrix = np.zeros_like(binary_matrix, dtype=np.int32)
-    
-    for j in range(num_genes):
-        on_indices = np.where(binary_matrix[:, j] == 1)[0]
-        mu_j = mu_vector[j]
-        r_j = r_vector[j]
-        p_j = r_j / (mu_j + r_j)
-        random_counts = nbinom.rvs(n=r_j, p=p_j, size=len(on_indices))
-        count_matrix[on_indices, j] = random_counts
-        
-    return count_matrix
+    n_cells, n_genes = binary_matrix.shape
+    if len(mu_vector) != n_genes or len(r_vector) != n_genes:
+        raise ValueError("mu_vector and r_vector must have length equal to n_genes.")
 
-import numpy as np
-
+    counts = np.zeros((n_cells, n_genes), dtype=np.int32)
+    for j in range(n_genes):
+        on_idx = np.where(binary_matrix[:, j] == 1)[0]
+        if len(on_idx) == 0:
+            continue
+        p_j = r_vector[j] / (mu_vector[j] + r_vector[j])
+        counts[on_idx, j] = nbinom.rvs(n=r_vector[j], p=p_j, size=len(on_idx))
+    return counts
 
 
 def plot_measurement_histograms(
@@ -239,118 +202,80 @@ def plot_measurement_histograms(
     figure_save_name: str = None,
     figsize: Tuple[int, int] = (12, 5),
     seed: int = None
-):
+) -> Tuple[dict, dict]:
     """
-    Runs the given circuit on a specified Qiskit backend (simulator or hardware)
-    and plots measurement histograms for its classical registers 'c_measure1'
-    and 'c_measure2' side-by-side.
+    Executes the circuit and plots side-by-side histograms for c_measure1 / c_measure2.
 
-    Args:
-        circuit (QuantumCircuit): The circuit to execute and plot. Should contain classical registers
-                                  named 'c_measure1' and 'c_measure2'.
-        nshots (int, optional): Number of shots (circuit runs). Defaults to 1000.
-        backend (optional): Qiskit backend to run the circuit (e.g. AerSimulator, or IBM/Q device).
-                            If None, uses AerSimulator with seed_simulator=seed.
-        title_prefix (str, optional): Prefix for the figure title.
-        seed (int, optional): Random seed passed to AerSimulator when backend is None. Defaults to None.
-        figure_save_name (str, optional): If provided, saves the figure to this filename.
-        figsize (tuple, optional): Figure size in inches. Default is (12, 5).
+    Parameters
+    ----------
+    circuit : QuantumCircuit
+        Must contain classical registers named 'c_measure1' and 'c_measure2'.
+    nshots : int
+        Number of measurement shots.
+    backend : Qiskit backend or None
+        None -> AerSimulator(seed_simulator=seed).
+    title_prefix : str
+        Prefix for the figure suptitle.
+    figure_save_name : str or None
+        If given, saves the figure to this path.
+    figsize : tuple
+        Matplotlib figure size.
+    seed : int or None
+        Seed for AerSimulator when backend is None.
 
-    Returns:
-        Tuple (counts_measure1, counts_measure2): Measured bitstring counts for both registers.
-
-    Notes:
-        - If 'c_measure1' or 'c_measure2' registers are missing, their count/histogram will be skipped.
-        - To run on hardware, pass a backend instance provisioned through Qiskit.
+    Returns
+    -------
+    (counts_measure1, counts_measure2) : (dict, dict)
+        Bitstring -> count mappings for each classical register.
     """
+    print(f"\n--- Running circuit: {title_prefix} ---")
 
-    print(f"\n--- Running circuit for: {title_prefix} ---")
-    # 1. Select backend
     if backend is None:
         backend = AerSimulator(seed_simulator=seed)
-    # transpile if using AerSimulator (for real hardware, sometimes needed as well)
+
     try:
-        pm = generate_preset_pass_manager(backend=backend, optimization_level=3)
+        pm      = generate_preset_pass_manager(backend=backend, optimization_level=3)
         qc_comp = pm.run(circuit)
     except Exception:
-        # Fallback if not available for the backend (some HW backends)
         qc_comp = circuit
-    sampler = Sampler(mode=backend)
-    job = sampler.run([qc_comp], shots=nshots)
 
-    # 2. Access results and plot histograms
-    try:
-        result = job.result()[0]
-        
-        counts_measure1 = None
-        counts_measure2 = None
+    result = Sampler(mode=backend).run([qc_comp], shots=nshots).result()[0]
 
-        # Check if classical registers exist and get counts
-        if 'c_measure1' in [creg.name for creg in circuit.cregs]:
-            counts_measure1 = result.data.c_measure1.get_counts()
-            print(f"Counts for c_measure1: {counts_measure1}")
-        else:
-            print("Warning: Classical register 'c_measure1' not found in circuit. Skipping histogram for c_measure1.")
+    reg_names       = [cr.name for cr in circuit.cregs]
+    counts_measure1 = result.data.c_measure1.get_counts() if 'c_measure1' in reg_names else None
+    counts_measure2 = result.data.c_measure2.get_counts() if 'c_measure2' in reg_names else None
 
-        if 'c_measure2' in [creg.name for creg in circuit.cregs]:
-            counts_measure2 = result.data.c_measure2.get_counts()
-            print(f"Counts for c_measure2: {counts_measure2}")
-        else:
-            print("Warning: Classical register 'c_measure2' not found in circuit. Skipping histogram for c_measure2.")
-
-        # Create a figure with two subplots
-        if counts_measure1 is not None or counts_measure2 is not None:
-            fig, axes = plt.subplots(1, 2, figsize=figsize) # 1 row, 2 columns
-            fig.suptitle(f"{title_prefix} - Measurement Counts ({nshots} shots)", fontsize=16)
-
-            if counts_measure1 is not None:
-                plot_histogram(counts_measure1, ax=axes[0], title="c_measure1")
-                axes[0].set_title("c_measure1") # Manually set the title
+    if counts_measure1 is not None or counts_measure2 is not None:
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+        fig.suptitle(f"{title_prefix} -- Measurement counts ({nshots} shots)", fontsize=14)
+        for ax, counts, label in zip(axes,
+                                     [counts_measure1, counts_measure2],
+                                     ['c_measure1', 'c_measure2']):
+            if counts is not None:
+                plot_histogram(counts, ax=ax, title=label)
             else:
-                axes[0].set_title("c_measure1 (Not Found)")
-                axes[0].text(0.5, 0.5, "No data", horizontalalignment='center', verticalalignment='center', transform=axes[0].transAxes)
+                ax.set_title(f"{label} (not found)")
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        if figure_save_name:
+            fig.savefig(figure_save_name)
+            print(f"Figure saved to {figure_save_name}")
+        plt.show()
 
-            if counts_measure2 is not None:
-                plot_histogram(counts_measure2, ax=axes[1], title="c_measure2")
-                axes[1].set_title("c_measure2") # Manually set the title
-            else:
-                axes[1].set_title("c_measure2 (Not Found)")
-                axes[1].text(0.5, 0.5, "No data", horizontalalignment='center', verticalalignment='center', transform=axes[1].transAxes)
-
-            plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to prevent title overlap
-            plt.show() # Display the figure
-
-            if figure_save_name:
-                try:
-                    fig.savefig(figure_save_name)
-                    print(f"Histogram figure saved to {figure_save_name}")
-                except Exception as save_e:
-                    print(f"Error saving figure to {figure_save_name}: {save_e}")
-                finally:
-                    plt.close(fig) # Close the figure after showing/saving to free memory
-        else:
-            print("No classical register data available to plot histograms.")
-
-    except AttributeError as e:
-        print(f"Error accessing classical register counts: {e}")
-        print("Please ensure your circuit has classical registers named 'c_measure1' and 'c_measure2' and measurements are applied.")
-    except Exception as e:
-        print(f"An unexpected error occurred during simulation or plotting: {e}")
-    
     return counts_measure1, counts_measure2
 
-def get_best_quantum_backend(required_qubits=5):
+
+def get_best_quantum_backend(required_qubits: int = 5):
+    """
+    Returns the least-busy operational IBM Quantum backend with at least
+    required_qubits qubits. Requires a saved QiskitRuntimeService account.
+    """
     from qiskit_ibm_runtime import QiskitRuntimeService
-    service = QiskitRuntimeService()
-    backends = service.backends(simulator=False, operational=True)
+    service    = QiskitRuntimeService()
     candidates = [
-        b for b in backends
-        if hasattr(b, "configuration") and hasattr(b, "status")
-           and b.configuration().n_qubits >= required_qubits
-           and b.status().operational
+        b for b in service.backends(simulator=False, operational=True)
+        if b.configuration().n_qubits >= required_qubits and b.status().operational
     ]
     if not candidates:
-        raise RuntimeError(f"No quantum backend has >= {required_qubits} qubits.")
-    # sort by pending jobs (use .status().pending_jobs)
+        raise RuntimeError(f"No operational IBM backend with >= {required_qubits} qubits found.")
     candidates.sort(key=lambda b: b.status().pending_jobs)
     return candidates[0]
