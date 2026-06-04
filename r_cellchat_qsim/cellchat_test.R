@@ -77,7 +77,7 @@ cellchat_Mo <- setIdent(cellchat_Mo, ident.use = "CellType")
 cellchat_Mo <- subsetData(cellchat_Mo, features = rownames(cellchat_Mo@data))
 cellchat_Mo <- identifyOverExpressedGenes(cellchat_Mo)
 cellchat_Mo <- identifyOverExpressedInteractions(cellchat_Mo)
-cellchat_Mo <- computeCommunProb(cellchat_Mo, type = "truncatedMean", trim = 0.01)
+cellchat_Mo <- computeCommunProb(cellchat_Mo, type = "truncatedMean", trim = 0.01, nboot = 1000)
 cellchat_Mo <- computeCommunProbPathway(cellchat_Mo, thresh = 0.05)
 cellchat_Mo <- aggregateNet(cellchat_Mo)
 
@@ -86,7 +86,7 @@ cellchat_Co <- setIdent(cellchat_Co, ident.use = "CellType")
 cellchat_Co <- subsetData(cellchat_Co, features = rownames(cellchat_Co@data))
 cellchat_Co <- identifyOverExpressedGenes(cellchat_Co)
 cellchat_Co <- identifyOverExpressedInteractions(cellchat_Co)
-cellchat_Co <- computeCommunProb(cellchat_Co, type = "truncatedMean", trim = 0.01)
+cellchat_Co <- computeCommunProb(cellchat_Co, type = "truncatedMean", trim = 0.01, nboot = 1000)
 cellchat_Co <- computeCommunProbPathway(cellchat_Co, thresh = 0.05)
 cellchat_Co <- aggregateNet(cellchat_Co)
 
@@ -94,22 +94,7 @@ cellchat_Co <- aggregateNet(cellchat_Co)
 cellchat_merged <- mergeCellChat(list(Mo = cellchat_Mo, Co = cellchat_Co),
                                  add.names = c("Mo", "Co"))
 
-# --- BUILD net: full communication table from merged object ------------------
-# subsetCommunication extracts the flat interaction table (prob + pval)
-# across both conditions — this is the base table we annotate with DE results.
-net <- subsetCommunication(cellchat_merged)
-
-# =============================================================================
-# MANUAL DE MAPPING TO CELLCHAT NETWORK
-# Bypasses netMappingDEG which fails on merged objects due to dataset-pooling.
-# Uses cell-type-aware Co vs Mo DE results (identifyOverExpressedGenes with
-# relaxed thresholds) and joins directly onto the communication table.
-# =============================================================================
-
 # --- Step 1: Run cross-condition DE with relaxed thresholds ------------------
-# thresh.pc=0, thresh.fc=0, thresh.p=1 ensures all quantum genes (g0-g9)
-# are included regardless of sparsity — necessary because quantum genes are
-# binary (ON/OFF) and fail standard percent-expressed filters.
 cellchat_merged <- identifyOverExpressedGenes(
   cellchat_merged,
   group.dataset = "datasets",
@@ -121,68 +106,75 @@ cellchat_merged <- identifyOverExpressedGenes(
   thresh.p      = 1.0
 )
 
-# --- Step 2: Build lookup table ----------------------------------------------
-# features.info contains per-gene Co vs Mo DE statistics,
-# stratified by cell type (clusters column).
-feat_info      <- cellchat_merged@var.features[["differential_genes_relaxed.info"]]
-feat_info$key  <- paste(feat_info$clusters, feat_info$features, sep = ".")
-feat_info_dedup <- feat_info[!duplicated(feat_info$key), ]
 
-# --- Step 3: Join DE statistics onto communication table ---------------------
-# pval         = CellChat permutation p-value for communication probability
-#                (0 means p < 1/N_permutations, i.e., p < 0.01)
-# ligand/receptor.pvalues = Wilcoxon DE p-value (Co vs Mo)
-# ligand/receptor.logFC   = log2 fold-change (Co vs Mo)
-net_manual <- net
 
-# Build join keys from source+ligand and target+receptor
-net_flat$source.ligand   <- paste(net_flat$source, net_flat$ligand,   sep = ".")
-net_flat$target.receptor <- paste(net_flat$target, net_flat$receptor, sep = ".")
 
-# Now join
-net_manual <- net_flat
-net_manual$ligand.logFC   <- feat_info_dedup$logFC[match(net_manual$source.ligand,   feat_info_dedup$key)]
-net_manual$ligand.pvalues <- feat_info_dedup$pvalues[match(net_manual$source.ligand, feat_info_dedup$key)]
-net_manual$ligand.pct.1   <- feat_info_dedup$pct.1[match(net_manual$source.ligand,   feat_info_dedup$key)]
-net_manual$ligand.pct.2   <- feat_info_dedup$pct.2[match(net_manual$source.ligand,   feat_info_dedup$key)]
-net_manual$receptor.logFC   <- feat_info_dedup$logFC[match(net_manual$target.receptor,   feat_info_dedup$key)]
-net_manual$receptor.pvalues <- feat_info_dedup$pvalues[match(net_manual$target.receptor, feat_info_dedup$key)]
-net_manual$receptor.pct.1   <- feat_info_dedup$pct.1[match(net_manual$target.receptor,   feat_info_dedup$key)]
-net_manual$receptor.pct.2   <- feat_info_dedup$pct.2[match(net_manual$target.receptor,   feat_info_dedup$key)]
 
-# Add Co/Mo probability ratio
-prob_mo <- net_manual$prob[net_manual$datasets == "Mo"]
-prob_co <- net_manual$prob[net_manual$datasets == "Co"]
-net_manual$prob_ratio_Co_Mo <- NA
-net_manual$prob_ratio_Co_Mo[net_manual$datasets == "Mo"] <- prob_co / prob_mo
-net_manual$prob_ratio_Co_Mo[net_manual$datasets == "Co"] <- prob_co / prob_mo
+# --- BUILD BASE NETWORK ------------------------------------------------------
+# Bind the flat interaction tables from the list into a single data frame
+net_list <- subsetCommunication(cellchat_merged)
+net <- bind_rows(net_list, .id = "datasets") 
 
-# Round numeric columns to 3 decimal places for display
+# --- Step 2: Build streamlined lookup table ----------------------------------
+feat_info <- cellchat_merged@var.features[["differential_genes_relaxed.info"]]
+
+# Use CellChat's native 'datasets' column directly
+feat_lookup <- feat_info %>%
+  select(clusters, features, logFC, pvalues, pct.1, pct.2, datasets) %>%
+  distinct(clusters, features, .keep_all = TRUE)
+
+# --- Step 3: Join DE statistics safely using dplyr ---------------------------
+net_manual <- net %>%
+  # Join for Ligand
+  left_join(feat_lookup, by = c("source" = "clusters", "ligand" = "features")) %>%
+  rename(ligand.logFC = logFC, ligand.pvalues = pvalues, ligand.pct.1 = pct.1, 
+         ligand.pct.2 = pct.2, ligand.upregulated_in = datasets.y) %>%
+  rename(datasets = datasets.x) %>% 
+  # Join for Receptor
+  left_join(feat_lookup, by = c("target" = "clusters", "receptor" = "features")) %>%
+  rename(receptor.logFC = logFC, receptor.pvalues = pvalues, receptor.pct.1 = pct.1, 
+         receptor.pct.2 = pct.2, receptor.upregulated_in = datasets.y) %>%
+  rename(datasets = datasets.x)
+
+# --- Step 4: Calculate Co/Mo Probability Ratios Accurately -------------------
+# Reshape base communication probabilities side-by-side to cleanly compute ratios
+prob_ratios <- net %>%
+  select(source, target, ligand, receptor, datasets, prob) %>%
+  distinct(source, target, ligand, receptor, datasets, .keep_all = TRUE) %>% 
+  tidyr::pivot_wider(names_from = datasets, values_from = prob, values_fill = 0) %>%
+  mutate(prob_ratio_Co_Mo = Co / Mo) %>%
+  select(source, target, ligand, receptor, prob_ratio_Co_Mo)
+
+# Merge ratios back into the main manual annotation table
+net_manual <- net_manual %>%
+  left_join(prob_ratios, by = c("source", "target", "ligand", "receptor"))
+
+# --- Step 5: Format and Export -----------------------------------------------
 cols_to_round <- c("prob", "ligand.logFC", "ligand.pvalues", "ligand.pct.1", "ligand.pct.2",
                    "receptor.logFC", "receptor.pvalues", "receptor.pct.1", "receptor.pct.2",
                    "prob_ratio_Co_Mo")
-net_print <- net_manual
-net_print[, cols_to_round] <- lapply(net_print[, cols_to_round], round, digits = 3)
 
-print(net_print[, c("source", "target", "ligand", "receptor",
-                    "prob", "pval", "datasets", "prob_ratio_Co_Mo",
-                    "ligand.logFC",   "ligand.pvalues",
-                    "receptor.logFC", "receptor.pvalues")])
+net_print <- net_manual %>%
+  mutate(across(all_of(cols_to_round), ~ round(.x, 3)))
 
-write.csv(feat_info_dedup, "de_genes_Co_vs_Mo.csv",   row.names = TRUE)
-write.csv(net_manual,      "cellchat_net_with_DE.csv", row.names = FALSE)
+# View clean snippet with expression p-values and natural dataset track labels
+print(head(net_print[, c("source", "target", "ligand", "receptor",
+                         "prob", "pval", "datasets", "prob_ratio_Co_Mo",
+                         "ligand.logFC", "ligand.pvalues", "ligand.upregulated_in",
+                         "receptor.logFC", "receptor.pvalues", "receptor.upregulated_in")]))
+
+write.csv(feat_lookup, "de_genes_Co_vs_Mo.csv", row.names = FALSE)
+write.csv(net_manual,  "cellchat_net_with_DE.csv", row.names = FALSE)
 
 
 # --- VISUALIZATIONS ----------------------------------------------------------
-weight.max <- getMaxWeight(list(cellchat_Co, cellchat_Mo),
-                           attribute = c("count", "weight"))
+weight.max <- getMaxWeight(list(cellchat_Co, cellchat_Mo), attribute = c("count", "weight"))
+
 par(mfrow = c(1, 2), xpd = TRUE)
 netVisual_circle(cellchat_Co@net$count, weight.scale = TRUE, label.edge = FALSE,
-                 edge.weight.max = weight.max[1],
-                 title.name = "Number of interactions - Co")
+                 edge.weight.max = weight.max[1], title.name = "Number of interactions - Co")
 netVisual_circle(cellchat_Mo@net$count, weight.scale = TRUE, label.edge = FALSE,
-                 edge.weight.max = weight.max[1],
-                 title.name = "Number of interactions - Mo")
+                 edge.weight.max = weight.max[1], title.name = "Number of interactions - Mo")
 
 netVisual_bubble(cellchat_merged,
                  sources.use = c("CellType1", "CellType2"),
