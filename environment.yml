@@ -12,6 +12,9 @@ dependencies:
   - pandas
   - matplotlib
   - scikit-learn
+  - arboreto
+  - dask
+  - distributed
   - qiskit=2.1
   - qiskit-ibm-runtime
   - ipykernel
