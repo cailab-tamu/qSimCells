@@ -107,9 +107,6 @@ cellchat_merged <- identifyOverExpressedGenes(
 )
 
 
-
-
-
 # --- BUILD BASE NETWORK ------------------------------------------------------
 # Bind the flat interaction tables from the list into a single data frame
 net_list <- subsetCommunication(cellchat_merged)
@@ -164,7 +161,7 @@ print(head(net_print[, c("source", "target", "ligand", "receptor",
                          "receptor.logFC", "receptor.pvalues", "receptor.upregulated_in")]))
 
 write.csv(feat_lookup, "de_genes_Co_vs_Mo.csv", row.names = FALSE)
-write.csv(net_manual,  "cellchat_net_with_DE.csv", row.names = FALSE)
+write.csv(net_print,  "cellchat_net_with_DE.csv", row.names = FALSE)
 
 
 # --- VISUALIZATIONS ----------------------------------------------------------
