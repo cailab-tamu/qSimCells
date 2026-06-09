@@ -14,6 +14,8 @@ dependencies:
   - scikit-learn
   - dask
   - distributed
+  - seaborn          # benchmark figures
+  - umap-learn       # sc.tl.umap() in benchmark
   - qiskit=2.1
   - qiskit-ibm-runtime
   - ipykernel
@@ -22,9 +24,10 @@ dependencies:
   - notebook
   - pylatexenc    # Recommended for some Qiskit visualizations
   - tk            # Recommended for some Qiskit visualizations
-  - Pillow  
+  - Pillow
   - pip
   - pip:
-    - arboreto
+    - arboreto        # GRNBoost2 + GENIE3 inference
     - qiskit_aer
     - qiskit-optimization
+    - sergio_rs       # SERGIO scRNA-seq simulator (Rust reimplementation, ~150x faster)

@@ -11,10 +11,11 @@ This project provides a Python package and Jupyter notebook workflows for simula
 
 - [Project Structure](#project-structure)
 - [Installation](#installation)
+- [Simulator Benchmark — Extra Packages](#simulator-benchmark--extra-packages)
 - [IBM Quantum Setup (Optional)](#ibm-quantum-setup-optional)
 - [Running the Main Analysis & Simulation Workflow](#running-the-main-analysis--simulation-workflow)
 - [Using the Python Package in Your Own Code](#using-the-python-package-in-your-own-code)
-- [Verifying with R/CellChat](#verifying-with-rcellchat)
+- [R Scripts](#r-scripts)
 - [Package Hierarchy](#package-hierarchy)
 - [Main Entry Point](#main-entry-point)
 - [Citation/Preprint](#citationpreprint)
@@ -28,15 +29,18 @@ This project provides a Python package and Jupyter notebook workflows for simula
 
 ```
 qSimCells/
-├── environment.yml              # Conda environment definition
-├── pyproject.toml               # Python package/dependency definition
-├── qSim_cell_chat.ipynb         # Main Jupyter notebook pipeline
+├── environment.yml              # Conda environment — core pipeline
+├── pyproject.toml               # Python package definition
+├── qSim_cell_chat.ipynb         # Main pipeline notebook
+├── qSim_cell_benchmarks.ipynb   # GRN benchmark (4 methods × 2 cases × 10 seeds)
+├── simulator_benchmark.ipynb    # Simulator comparison: SERGIO vs qSimCells vs scMultiSim
+├── scmultisim_benchmark.R       # Official scMultiSim simulation script (outputs .mtx)
 ├── README.md                    # This file
-├── qsim_cells/                  # Main Python package
+├── qsim_cells/                  # Core Python package
 │   ├── __init__.py
-│   ├── generative.py            # Quantum circuit/simulation functions
-│   └── grn_utils.py             # Gene network utility functions
-├── r_cellchat_qsim/             # R scripts/output for CellChat interaction validation
+│   ├── generative.py            # Quantum circuit and simulation functions
+│   └── grn_utils.py             # GRN utility functions
+├── r_cellchat_qsim/             # R scripts and outputs for CellChat validation
 │   ├── cellchat_test.R
 │   └── ...other R outputs...
 └── sim_merged_datasets_co_mo_quantum_*.h5ad    # Example output data files
@@ -65,6 +69,36 @@ qSimCells/
     ```sh
     pip install -e .
     ```
+
+---
+
+## Benchmark Packages
+
+All benchmark dependencies are included in `environment.yml` — no separate install
+step is needed. The standard `conda env create` command above installs everything,
+including the GRN inference and simulator packages.
+
+| Package | Purpose |
+|---------|---------|
+| `arboreto` (pip) | GRNBoost2 + GENIE3 inference |
+| `sergio_rs` (pip) | Official SERGIO scRNA-seq simulator — Rust reimplementation, ~150× faster (Dibaeinia & Sinha 2020) |
+| `scikit-learn` | Silhouette score, AUROC |
+| `seaborn` | Benchmark figures |
+| `umap-learn`, `leidenalg` | UMAP + Leiden clustering in scanpy |
+
+> **Important — SERGIO install note:**  
+> `sergio_rs` is installed automatically from PyPI via `environment.yml`.  
+> Do **not** run `pip install sergio` manually — that installs an unrelated package.  
+> Import in Python: `import sergio_rs`
+
+> **scMultiSim (R, optional):**  
+> `simulator_benchmark.ipynb` calls scMultiSim via `Rscript` and falls back to a
+> Python CIF implementation automatically if R is unavailable.  
+> To install scMultiSim in R:
+> ```r
+> install.packages("remotes")
+> remotes::install_github("ZhangLabGT/scMultiSim")
+> ```
 
 ---
 
@@ -130,11 +164,28 @@ counts1, counts2 = plot_measurement_histograms(qc, backend=backend)
 
 ---
 
-## Verifying with R/CellChat
+## R Scripts
 
-- The `r_cellchat_qsim/` folder contains R scripts and results for CellChat-based ligand-receptor communication verification.
-- After running the Python pipeline and exporting simulated data, use the R scripts in that folder for complementary cell interaction analysis.
-- See `r_cellchat_qsim/cellchat_test.R` for details.
+**CellChat validation** (`r_cellchat_qsim/cellchat_test.R`): ligand-receptor
+communication analysis on qSimCells-simulated data. Run after the main Python pipeline.
+
+**scMultiSim benchmark** (`scmultisim_benchmark.R`): simulates co-culture and
+mono-culture data using the official scMultiSim package and saves outputs as 10x
+Genomics sparse matrices (`.mtx` + `features.tsv` + `barcodes.tsv`) under
+`scmultisim_simulation/`. Called automatically from `simulator_benchmark.ipynb`,
+or run directly:
+
+```sh
+Rscript scmultisim_benchmark.R scmultisim_simulation
+```
+
+Read the outputs in Python:
+```python
+import scipy.io, pandas as pd
+mat      = scipy.io.mmread("scmultisim_simulation/co_culture/matrix.mtx").T.toarray()
+features = pd.read_csv("scmultisim_simulation/co_culture/features.tsv", header=None)[0].tolist()
+barcodes = pd.read_csv("scmultisim_simulation/co_culture/barcodes.tsv", header=None)[0].tolist()
+```
 
 ---
 
