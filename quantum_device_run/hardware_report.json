@@ -1,0 +1,88 @@
+{
+  "backend": "ibm_marrakesh",
+  "calibration_date": "2026-06-15 12:31:05-05:00",
+  "run_utc": "2026-06-15 18:06:39.459483",
+  "n_qubits_device": 156,
+  "native_2q_gate": "cz",
+  "calibration_note": "IBM quantum computers undergo continuous monitoring and daily benchmarking. Error rates reflect the calibration snapshot at run time. T1/T2 and gate fidelities drift due to TLS fluctuations, ambient conditions, and control-system instability. The calibration_date field uniquely identifies the snapshot used for this run.",
+  "device_medians": {
+    "T1_us": 165.7,
+    "T2_us": 86.7,
+    "readout_pct": 1.019,
+    "sx_pct": 0.0384,
+    "cz_pct": 0.264
+  },
+  "co_gene_map": {
+    "g0": 35,
+    "g1": 147,
+    "g2": 21,
+    "g3": 14,
+    "g4": 2,
+    "g5": 15,
+    "g6": 12,
+    "g7": 19,
+    "g8": 139,
+    "g9": 148
+  },
+  "mo_gene_map": {
+    "g0": 21,
+    "g1": 147,
+    "g2": 148,
+    "g3": 2,
+    "g4": 12,
+    "g5": 139,
+    "g6": 14,
+    "g7": 54,
+    "g8": 134,
+    "g9": 75
+  },
+  "shot_budgets": {
+    "sim_ideal": 32768,
+    "sim_noisy": 8192,
+    "hw_raw": 4096,
+    "hw_mitigated": 4000,
+    "num_rands": 200,
+    "shots_per_rand": 20,
+    "cells_per_adata": 2000
+  },
+  "mitigation": [
+    "DD/XY4",
+    "gate_twirling",
+    "TREX"
+  ],
+  "benchmark": {
+    "metric_1": "Spearman rho of per-gene P(1) vs Ideal AerSim",
+    "metric_2": "RMSE of per-gene P(1) vs Ideal AerSim",
+    "results": {
+      "Ideal AerSim": {
+        "spearman_rho_co": 1.0,
+        "spearman_rho_mo": 1.0,
+        "rmse_co": 0.0,
+        "rmse_mo": 0.0
+      },
+      "Noisy AerSim": {
+        "spearman_rho_co": 1.0,
+        "spearman_rho_mo": 1.0,
+        "rmse_co": 0.006926,
+        "rmse_mo": 0.0059
+      },
+      "Real HW raw": {
+        "spearman_rho_co": 1.0,
+        "spearman_rho_mo": 0.9636,
+        "rmse_co": 0.009516,
+        "rmse_mo": 0.008732
+      },
+      "Real HW mitigated": {
+        "spearman_rho_co": 1.0,
+        "spearman_rho_mo": 0.9515,
+        "rmse_co": 0.010547,
+        "rmse_mo": 0.004751
+      }
+    }
+  },
+  "adata_files": {
+    "simulated": "..\\sim_merged_datasets_co_mo_quantum_simulated.h5ad",
+    "device": "..\\sim_merged_datasets_co_mo_quantum_device.h5ad",
+    "backup": "..\\sim_merged_datasets_co_mo_quantum_device_20260615.h5ad"
+  }
+}
