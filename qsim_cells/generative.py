@@ -132,6 +132,60 @@ def add_crx_and_measurements_to_circuit(
     return circuit
 
 
+def run_qsimcells_circuit(
+    ang_ct1, ang_ct2, interaction_map, n_shots, seed: int = 42,
+    backend=None, optimization_level: int = 3
+) -> Tuple[dict, dict]:
+    """
+    Build, transpile, and sample a two-register qSimCells circuit.
+
+    Parameters
+    ----------
+    ang_ct1 : array-like
+        Ry rotation angles (radians) for Cell Type 1 qubits.
+    ang_ct2 : array-like
+        Ry rotation angles (radians) for Cell Type 2 qubits.
+    interaction_map : list of (int, int)
+        CRX(pi) gate pairs using global qubit indices.
+    n_shots : int
+        Number of measurement shots (= number of simulated cells).
+    seed : int
+        Seed for both np.random and AerSimulator.
+    backend : Qiskit backend or None
+        None -> AerSimulator(seed_simulator=seed).
+    optimization_level : int, default 3
+        Pass-manager optimization level (0-3). Use 1 for speed, 3 for depth.
+
+    Returns
+    -------
+    (counts_ct1, counts_ct2) : (dict, dict)
+        Bitstring -> count mappings for c_measure1 and c_measure2.
+    """
+    np.random.seed(seed)
+
+    circ1    = create_rotation_circuit(ang_ct1)
+    circ2    = create_rotation_circuit(ang_ct2)
+    combined = concatenate_circuits_with_separate_measurements(circ1, circ2)
+    final    = add_crx_and_measurements_to_circuit(combined, circ1.num_qubits, interaction_map)
+
+    if backend is None:
+        backend = AerSimulator(seed_simulator=seed)
+
+    try:
+        pm      = generate_preset_pass_manager(backend=backend, optimization_level=optimization_level)
+        qc_comp = pm.run(final)
+    except Exception:
+        qc_comp = final
+
+    result = Sampler(mode=backend).run([qc_comp], shots=n_shots).result()[0]
+
+    reg_names  = [cr.name for cr in final.cregs]
+    counts_ct1 = result.data.c_measure1.get_counts() if 'c_measure1' in reg_names else None
+    counts_ct2 = result.data.c_measure2.get_counts() if 'c_measure2' in reg_names else None
+
+    return counts_ct1, counts_ct2
+
+
 def create_binary_matrix(joint_counts: dict) -> np.ndarray:
     """
     Expands a Qiskit bitstring-count dictionary into a binary cell x gene matrix.
