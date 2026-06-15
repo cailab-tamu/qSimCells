@@ -1,37 +1,16 @@
-# scmultisim_benchmark.R
+# scmultisim_benchmark.R  — GRN gradient edition
 # ──────────────────────────────────────────────────────────────────────────────
-# Simulate single-cell RNA-seq data with the official scMultiSim package
-# (ZhangLabGT/scMultiSim; Zhang et al. 2023) and save outputs in
-# 10x Genomics sparse format (.mtx + features.tsv + barcodes.tsv)
-# for loading in Python via scipy.io.mmread.
-#
-# Install scMultiSim once (inside R):
-#   install.packages("remotes")
-#   remotes::install_github("ZhangLabGT/scMultiSim")
+# Simulates a SINGLE cell population at a given GRN regulatory strength.
+# Called 4x from Python (one call per gradient level).
 #
 # Usage:
-#   Rscript scmultisim_benchmark.R          # writes to ./scmultisim_simulation/
-#   Rscript scmultisim_benchmark.R <outdir> # writes to <outdir>/
+#   Rscript scmultisim_benchmark.R <outdir> <effect> <seed>
+#     outdir  — base output folder
+#     effect  — GRN edge coupling strength [0.001 ... 1.0] (cascade coupling)
+#     seed    — integer random seed (default 42)
 #
-# Output folder structure:
-#   scmultisim_simulation/
-#   ├── co_culture/
-#   │   ├── matrix.mtx      sparse count matrix  (genes × cells, Market Exchange)
-#   │   ├── features.tsv    gene names, one per line
-#   │   ├── barcodes.tsv    cell barcodes, one per line
-#   │   └── metadata.tsv    cell metadata (cell_type, cluster, ...)
-#   └── mono_culture/
-#       ├── matrix.mtx
-#       ├── features.tsv
-#       ├── barcodes.tsv
-#       └── metadata.tsv
-#
-# Read in Python:
-#   import scipy.io, pandas as pd, numpy as np
-#   mat      = scipy.io.mmread("co_culture/matrix.mtx").T.toarray()  # cells × genes
-#   features = pd.read_csv("co_culture/features.tsv", header=None)[0].tolist()
-#   barcodes = pd.read_csv("co_culture/barcodes.tsv", header=None)[0].tolist()
-#   meta     = pd.read_csv("co_culture/metadata.tsv", sep="\t")
+# Saves to: <outdir>/grn_<effect_tag>/
+#   matrix.mtx, features.tsv, barcodes.tsv, metadata.tsv
 # ──────────────────────────────────────────────────────────────────────────────
 
 suppressPackageStartupMessages({
@@ -40,208 +19,101 @@ suppressPackageStartupMessages({
   library(ape)
 })
 
-# Optional: UMAP plotting via Seurat
-PLOT_UMAPS <- requireNamespace("Seurat", quietly = TRUE)
-if (PLOT_UMAPS) {
-  suppressPackageStartupMessages({
-    library(Seurat)
-    library(ggplot2)
-  })
-  cat("Seurat found — UMAPs will be saved.\n")
-} else {
-  cat("Note: install Seurat to enable UMAP plots.\n")
-}
+args       <- commandArgs(trailingOnly = TRUE)
+out_dir    <- if (length(args) >= 1) args[1] else "scmultisim_simulation"
+effect_val <- if (length(args) >= 2) as.numeric(args[2]) else 1.0
+base_seed  <- if (length(args) >= 3) as.integer(args[3]) else 42L
 
-# ── Output directory ──────────────────────────────────────────────────────────
-args    <- commandArgs(trailingOnly = TRUE)
-out_dir <- if (length(args) >= 1) args[1] else "scmultisim_simulation"
-dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-cat(sprintf("Writing outputs to: %s\n", out_dir))
+# Subfolder tag: effect=0.34 -> "034"
+effect_tag <- sprintf("%03.0f", effect_val * 100)
+sub_dir    <- file.path(out_dir, paste0("grn_", effect_tag))
+dir.create(sub_dir, showWarnings = FALSE, recursive = TRUE)
+cat(sprintf("scMultiSim GRN gradient — effect=%.2f -> %s\n", effect_val, sub_dir))
 
-BENCHMARK_SEED <- 42L
-set.seed(BENCHMARK_SEED)
+set.seed(base_seed)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 1. Shared GRN definition
-# ─────────────────────────────────────────────────────────────────────────────
-# 5-gene cascade matching qSimCells and SERGIO (1-indexed, R convention):
-#   G1 (master regulator) → G2 → G3 → G4    cascade
-#   G5                                        independent control gene
+N_CELLS <- 500L
+N_HKG   <- 50L
+MU_HKG  <- 80.
+R_HKG   <-  6.
+
+# 5-gene cascade (1-indexed): G1->G2->G3->G4, G5 independent
 grn <- data.frame(
   regulator = c(1L, 2L, 3L),
   target    = c(2L, 3L, 4L),
-  effect    = c(1.0, 1.0, 1.0)
+  effect    = c(effect_val, effect_val, effect_val)
 )
 
-# Gene name helper: scMultiSim may output more genes than just the GRN genes
-# (it adds unregulated genes via unregulated.gene.ratio, default 0.1).
-# We rename all output genes sequentially as G0, G1, G2, ... so names are
-# consistent and 0-indexed to match Python / SERGIO / qSimCells conventions.
 make_gene_names <- function(n) paste0("G", seq_len(n) - 1L)
 
-# ── Housekeeping gene constants (matches qSim_cell_benchmarks.ipynb) ─────────
-N_HKG  <- 50L
-MU_HKG <- 80.
-R_HKG  <-  6.
+# Two near-identical pseudo-populations (required by scMultiSim internals;
+# diff.cif.fraction=0.10 is the minimum safe value — fewer than 2 diff CIFs
+# causes an internal dimension crash). Cells are effectively homogeneous.
+tree <- read.tree(text = "((R1:1,R2:1):1);")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. Helper: save one simulation result as 10x sparse format
-#    50 HKGs (NB mu=80, r=6) are appended so the saved data matches the
-#    convention used in qSim_cell_benchmarks.ipynb and the Python benchmark.
-# ─────────────────────────────────────────────────────────────────────────────
-save_10x <- function(results, subfolder) {
-  dir.create(subfolder, showWarnings = FALSE, recursive = TRUE)
-
-  counts_gxc <- results$counts      # genes × cells
-  meta       <- results$cell_meta
-
-  n_cells    <- ncol(counts_gxc)
-  grn_names  <- make_gene_names(nrow(counts_gxc))
-
-  # Append 50 housekeeping genes — NB(size=R_HKG, mu=MU_HKG), all cells active
-  set.seed(BENCHMARK_SEED + 200L)
-  hkg_mat <- matrix(
-    rnbinom(n_cells * N_HKG, size = R_HKG, mu = MU_HKG),
-    nrow = N_HKG, ncol = n_cells
-  )
-  rownames(hkg_mat) <- paste0("HKG_", seq_len(N_HKG) - 1L)
-
-  full_counts <- rbind(counts_gxc, hkg_mat)              # (GRN genes + 50) × cells
-  gene_names  <- c(grn_names, rownames(hkg_mat))
-
-  # Barcodes
-  barcodes <- sprintf("cell_%04d", seq_len(n_cells))
-  colnames(full_counts) <- barcodes
-
-  # Write sparse matrix (genes × cells, Market Exchange format)
-  writeMM(Matrix(full_counts, sparse = TRUE),
-          file.path(subfolder, "matrix.mtx"))
-
-  # Write features
-  writeLines(gene_names, file.path(subfolder, "features.tsv"))
-
-  # Write barcodes (one barcode per line)
-  writeLines(barcodes, file.path(subfolder, "barcodes.tsv"))
-
-  # Write metadata
-  meta$barcode <- barcodes
-  write.table(meta, file.path(subfolder, "metadata.tsv"),
-              sep = "\t", row.names = FALSE, quote = FALSE)
-
-  cat(sprintf("  Saved: %d genes (%d GRN + %d HKG) × %d cells → %s\n",
-              nrow(full_counts), nrow(counts_gxc), N_HKG, n_cells, subfolder))
-
-  invisible(list(counts = full_counts, meta = meta, gene_names = gene_names))
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. Co-culture simulation  (TypeA + TypeB, 500 cells each = 1000 total)
-# ─────────────────────────────────────────────────────────────────────────────
-cat("Simulating co-culture...\n")
-set.seed(BENCHMARK_SEED)
-
-# discrete.cif = TRUE assigns cells to named leaf populations (discrete types).
-# Without this, scMultiSim samples cells continuously along branches via
-# SampleEdge(), which fails when the root branch-length is 0 or the tree
-# has too few cells to distribute.  Root branch-length set to 1 (non-zero).
-# discrete.pop.size gives exact cell counts per leaf (order = tree leaf order).
-# sigma.b is not a valid scMultiSim parameter — removed.
-tree_co <- read.tree(text = "((TypeA:1,TypeB:1):1);")
-
-opts_co <- list(
+# Design rationale:
+#   cif.mean = 1.5  LOW baseline so GRN effect dominates expression changes.
+#   Previous cif.mean=4.0 gave ~100-count CIF baseline that dwarfed the GRN
+#   signal — G1 log1p only varied 4.50→4.65 across all levels (0.15 units).
+#   At cif.mean=1.5, baseline drops ~12x so the GRN effect is the primary driver.
+#   cif.sigma = 1.0  increased cell-to-cell CIF variability for better GENIE3
+#   feature importance variance (analogous to NB overdispersion R_VEC).
+opts <- list(
   GRN               = grn,
-  num.cells         = 1000L,
+  num.cells         = N_CELLS,
   num.cifs          = 20L,
-  tree              = tree_co,
+  tree              = tree,
   discrete.cif      = TRUE,
-  discrete.pop.size = c(500L, 500L),   # 500 TypeA + 500 TypeB
-  diff.cif.fraction = 0.8,             # 80% of CIFs differ between types
+  discrete.pop.size = c(as.integer(N_CELLS / 2), as.integer(N_CELLS / 2)),
+  diff.cif.fraction = 0.10,
+  cif.mean          = 1.5,   # LOW: keeps GRN effect as primary driver
+  cif.sigma         = 1.0,   # increased variance for better GENIE3 detection
   scale.s           = 1.0,
-  rand.seed         = BENCHMARK_SEED
+  rand.seed         = base_seed
 )
 
-results_co <- sim_true_counts(opts_co)
-saved_co   <- save_10x(results_co, file.path(out_dir, "co_culture"))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. Mono-culture simulation  (500 cells, single homogeneous population)
-# ─────────────────────────────────────────────────────────────────────────────
-cat("Simulating mono-culture...\n")
-set.seed(BENCHMARK_SEED + 1L)
-
-# scMultiSim v1.2 requires ≥ 2 leaf nodes; single-leaf trees crash internally.
-# Fix: two-leaf tree with diff.cif.fraction = 0.10, so only 2/20 CIFs differ
-# between the two "populations."  They are effectively the same cell type —
-# a genuine mono-culture whose UMAP forms a single cluster.  This is
-# fundamentally different from co-culture (diff.cif.fraction = 0.8), where
-# the two populations are clearly separated.
-# (fraction < 0.10 gives <2 differential CIFs, which collapses the internal
-# DE matrix to a vector and crashes scMultiSim with "incorrect number of
-# dimensions")
-tree_mono <- read.tree(text = "((R1:1,R2:1):1);")
-opts_mono <- list(
-  GRN               = grn,
-  num.cells         = 500L,
-  num.cifs          = 20L,
-  tree              = tree_mono,
-  discrete.cif      = TRUE,
-  discrete.pop.size = c(250L, 250L),  # two near-identical replicates
-  diff.cif.fraction = 0.10,           # 2/20 CIFs differ → single cluster
-  # NOTE: fraction < 0.10 (i.e. < 2 diff CIFs) collapses the internal DE
-  # matrix to a vector and crashes with "incorrect number of dimensions"
-  scale.s           = 1.0,
-  rand.seed         = BENCHMARK_SEED + 1L
+cat("  Running sim_true_counts...\n")
+results <- tryCatch(
+  sim_true_counts(opts),
+  error = function(e) {
+    cat("ERROR in sim_true_counts:", conditionMessage(e), "\n")
+    quit(status = 1)
+  }
 )
-results_mono <- sim_true_counts(opts_mono)
-saved_mono   <- save_10x(results_mono, file.path(out_dir, "mono_culture"))
-cat("  Saved mono_culture:", ncol(results_mono$counts), "cells\n")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 5. UMAP visualisation
-# ─────────────────────────────────────────────────────────────────────────────
-plot_umap_seurat <- function(saved, title_prefix) {
-  # saved$counts already contains GRN genes + 50 HKGs (added in save_10x)
-  all_counts <- saved$counts    # (GRN + HKG) × cells
-  meta       <- saved$meta
-  all_genes  <- saved$gene_names
-  n_cells    <- ncol(all_counts)
+counts_gxc <- results$counts
+n_actual   <- ncol(counts_gxc)
+grn_names  <- make_gene_names(nrow(counts_gxc))
 
-  # Cell-type label from scMultiSim 'pop' column (1 = TypeA, 2 = TypeB)
-  cell_type <- if ("pop" %in% colnames(meta))
-    paste0("Type", LETTERS[meta$pop]) else rep("TypeA", n_cells)
+# Append 50 housekeeping genes
+set.seed(base_seed + 200L)
+hkg_mat <- matrix(
+  rnbinom(n_actual * N_HKG, size = R_HKG, mu = MU_HKG),
+  nrow = N_HKG, ncol = n_actual
+)
+rownames(hkg_mat) <- paste0("HKG_", seq_len(N_HKG) - 1L)
 
-  rownames(all_counts) <- all_genes
-  colnames(all_counts) <- sprintf("cell_%04d", seq_len(n_cells))
+full_counts <- rbind(counts_gxc, hkg_mat)
+gene_names  <- c(grn_names, rownames(hkg_mat))
+barcodes    <- sprintf("cell_%04d", seq_len(n_actual))
+colnames(full_counts) <- barcodes
 
-  # Build Seurat object — skip FindVariableFeatures (small gene set)
-  seu <- CreateSeuratObject(counts = all_counts, project = title_prefix)
-  seu$cell_type <- cell_type
-  Idents(seu)   <- "cell_type"
-  seu <- NormalizeData(seu, verbose = FALSE)
-  seu <- ScaleData(seu, features = rownames(seu), verbose = FALSE)
+writeMM(Matrix(full_counts, sparse = TRUE), file.path(sub_dir, "matrix.mtx"))
+writeLines(gene_names, file.path(sub_dir, "features.tsv"))
+writeLines(barcodes,   file.path(sub_dir, "barcodes.tsv"))
 
-  n_pc <- min(10L, nrow(all_counts) - 1L)
-  seu  <- RunPCA(seu,  features = rownames(seu), npcs = n_pc,
-                 verbose = FALSE, seed.use = BENCHMARK_SEED)
-  seu  <- RunUMAP(seu, dims = seq_len(n_pc),
-                  verbose = FALSE, seed.use = BENCHMARK_SEED)
+meta <- data.frame(
+  barcode      = barcodes,
+  grn_strength = sprintf("effect_%.2f", effect_val),
+  effect       = effect_val,
+  pop          = results$cell_meta$pop
+)
+write.table(meta, file.path(sub_dir, "metadata.tsv"),
+            sep = "\t", row.names = FALSE, quote = FALSE)
 
-  # Two panels: cell type + G0 (cascade driver) — display inline, no file save
-  p1 <- DimPlot(seu, reduction = "umap", group.by = "cell_type",
-                pt.size = 0.8, label = TRUE) +
-        ggtitle(paste(title_prefix, "— cell type"))
-  p2 <- FeaturePlot(seu, features = all_genes[1], reduction = "umap",
-                    pt.size = 0.8, cols = c("grey90", "#C0392B")) +
-        ggtitle(paste(title_prefix, "—", all_genes[1]))
-
-  print(p1 + p2)
-}
-
-if (PLOT_UMAPS) {
-  plot_umap_seurat(saved_co,   "scMultiSim co-culture")
-  plot_umap_seurat(saved_mono, "scMultiSim mono-culture")
-} else {
-  cat("Skipping UMAPs (Seurat not installed).\n")
-}
-
+g0_mean <- mean(counts_gxc[1, ])
+g1_mean <- if (nrow(counts_gxc) >= 2) mean(counts_gxc[2, ]) else NA
+cat(sprintf("  Saved: %d genes x %d cells -> %s\n",
+            nrow(full_counts), n_actual, sub_dir))
+cat(sprintf("  G0 mean=%.1f  G1 mean=%.1f\n", g0_mean, g1_mean))
 cat("Done.\n")
