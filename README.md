@@ -97,9 +97,10 @@ including the GRN inference and simulator packages.
 > Do **not** run `pip install sergio` manually — that installs an unrelated package.  
 > Import in Python: `import sergio_rs`
 
-> **scMultiSim (R, optional):**  
-> `simulator_benchmark.ipynb` calls scMultiSim via `Rscript` and falls back to a
-> Python CIF implementation automatically if R is unavailable.  
+> **scMultiSim (R, required for full benchmark):**  
+> `simulator_benchmark.ipynb` calls the official scMultiSim R package via `Rscript`.
+> A minimal Python CIF implementation is used as a fallback when R is unavailable,
+> but it is **not** equivalent to the official scMultiSim — results will differ.
 > To install scMultiSim in R:
 > ```r
 > install.packages("remotes")
