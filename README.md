@@ -11,13 +11,12 @@ This project provides a Python package and Jupyter notebook workflows for simula
 
 - [Project Structure](#project-structure)
 - [Installation](#installation)
-- [Simulator Benchmark — Extra Packages](#simulator-benchmark--extra-packages)
+- [Benchmark Packages](#benchmark-packages)
 - [IBM Quantum Setup (Optional)](#ibm-quantum-setup-optional)
 - [Running the Main Analysis & Simulation Workflow](#running-the-main-analysis--simulation-workflow)
 - [Using the Python Package in Your Own Code](#using-the-python-package-in-your-own-code)
 - [R Scripts](#r-scripts)
 - [Package Hierarchy](#package-hierarchy)
-- [Main Entry Point](#main-entry-point)
 - [Citation/Preprint](#citationpreprint)
 - [Contact](#contact)
 - [Contributing](#contributing)
@@ -29,22 +28,29 @@ This project provides a Python package and Jupyter notebook workflows for simula
 
 ```
 qSimCells/
-├── environment.yml              # Conda environment — core pipeline
-├── pyproject.toml               # Python package definition
-├── qSim_cell_chat.ipynb         # Main pipeline notebook
-├── qSim_cell_benchmarks.ipynb   # GRN benchmark (4 methods × 2 cases × 10 seeds)
-├── simulator_benchmark.ipynb    # Simulator comparison: SERGIO vs qSimCells vs scMultiSim
-├── scmultisim_benchmark.R       # Official scMultiSim simulation script (outputs .mtx)
-├── README.md                    # This file
-├── qsim_cells/                  # Core Python package
+├── environment.yml                     # Conda environment — core pipeline
+├── pyproject.toml                      # Python package definition
+├── qSim_cell_chat.ipynb                # Main pipeline: simulation, merging, CellChat
+├── qSim_cell_benchmarks.ipynb          # GRN benchmark (4 methods × 2 cases × 10 seeds)
+├── qSim_100k_convergence.ipynb         # Convergence analysis at N=100k shots
+├── simulator_benchmark.ipynb           # Simulator comparison: SERGIO vs qSimCells vs scMultiSim
+├── scmultisim_benchmark.R              # Official scMultiSim simulation script (outputs .mtx)
+├── README.md                           # This file
+├── qsim_cells/                         # Core Python package
 │   ├── __init__.py
-│   ├── generative.py            # Quantum circuit and simulation functions
-│   └── grn_utils.py             # GRN utility functions
-├── r_cellchat_qsim/             # R scripts and outputs for CellChat validation
+│   ├── generative.py                   # Quantum circuit and simulation functions
+│   └── grn_utils.py                    # GRN utility functions
+├── quantum_device_run/                 # Real IBM Quantum hardware run (read-only reference)
+│   ├── qSimCells_hardware_analysis.ipynb   # Hardware analysis notebook (do not modify)
+│   ├── hardware_report.json                # Calibration and job metadata
+│   └── qSimCells_master_figure.pdf         # Hardware figure
+├── r_cellchat_qsim/                    # R scripts and outputs for CellChat validation
 │   ├── cellchat_test.R
 │   └── ...other R outputs...
 └── sim_merged_datasets_co_mo_quantum_*.h5ad    # Example output data files
 ```
+
+> **Note:** `quantum_device_run/qSimCells_hardware_analysis.ipynb` contains real IBM Quantum job IDs and cannot be re-run without the original account credentials. Treat it as a read-only reference artifact.
 
 ---
 
@@ -108,14 +114,24 @@ If you wish to run on actual IBM Quantum devices:
 
 1. Register for a free account at [https://quantum.ibm.com](https://quantum.ibm.com).
 2. Find your API Token in your account/profile.
-3. In Python, save your token (run only once):
+3. In Python, save your token once (run this once in a separate script or notebook cell):
 
     ```python
     from qiskit_ibm_runtime import QiskitRuntimeService
     QiskitRuntimeService.save_account(token='YOUR_IBM_TOKEN_HERE')
     ```
 
-4. The package/notebooks will now be able to use `QiskitRuntimeService()` to submit jobs to IBM Quantum devices.
+4. After saving, `QiskitRuntimeService()` will load credentials automatically in subsequent sessions.
+
+> **Security:** Never hardcode your IBM token directly in notebook code or commit it to version control. Use `save_account()` to store it in your local credentials file, or load it from an environment variable.
+
+### Hardware Validation
+
+A full hardware run on **IBM Marrakesh** (27-qubit Eagle r3, native 2Q gate: CZ) is included under `quantum_device_run/`. The circuit (Ry + CRX(π), 10 genes, 2000 shots) was executed using dynamical decoupling (XY4) and gate twirling for noise mitigation on probability estimates. The resulting cell profiles are stored in `sim_merged_datasets_co_mo_quantum_device.h5ad`.
+
+Calibration at time of run (2026-06-15): T1 = 166 µs, T2 = 87 µs, readout error ≈ 1.02%, sx/X error ≈ 0.038%, CZ error ≈ 0.26%.
+
+> **Note on error mitigation:** Noise mitigation (dynamical decoupling, gate twirling, TREX) applies to probability *estimates* used in Figure S3. The individual bitstring cell profiles saved to `.h5ad` come from raw 2000-shot hardware counts and are not error-mitigated (mitigation operates on aggregated statistics, not individual bitstrings). Full quantum error *correction* is not applied — it would require ~100 physical qubits per logical qubit, beyond current device capacity.
 
 ---
 
@@ -133,33 +149,66 @@ jupyter lab qSim_cell_chat.ipynb
 
 This notebook demonstrates the end-to-end workflow: quantum circuit simulation, matrix reconstruction, AnnData merging, and visualization.
 
-- To use a quantum device instead of simulator, pass a real Qiskit backend to `plot_measurement_histograms` inside the notebook.
-- Results (e.g. `.h5ad` files) are saved as shown in the notebook.
+Other reproducible notebooks:
+- **`qSim_cell_benchmarks.ipynb`** — GRN benchmarking (4 methods × 2 cases × 10 seeds)
+- **`qSim_100k_convergence.ipynb`** — Convergence analysis at 100k shots
+- **`simulator_benchmark.ipynb`** — SERGIO vs qSimCells vs scMultiSim comparison
 
 ---
 
 ## Using the Python Package in Your Own Code
 
-You can use any function directly after install (if your conda env is activated and you ran `pip install -e .`):
+You can use any function directly after install (if your conda env is activated and you ran `pip install -e .`).
+
+### Simulated run (AerSimulator)
 
 ```python
-from qsim_cells.generative import create_rotation_circuit, plot_measurement_histograms
+from qsim_cells.generative import run_qsimcells_circuit, create_binary_matrix
 import numpy as np
 
-# Create a circuit
-angles = [0.3, 0.8, 1.27]
-qc = create_rotation_circuit(angles)
+# Define angles and interaction map
+ang_ct1 = np.array([0.35, 0.35, 0.35, 0.35, 0.35]) * np.pi
+ang_ct2 = np.array([0.35, 0.35, 0.35, 0.35, 0.35]) * np.pi
+interaction_map = [(0, 5), (1, 6), (2, 7), (3, 8), (4, 9)]
 
-# Optionally select a backend (real quantum device)
-from qiskit_ibm_runtime import QiskitRuntimeService
-service = QiskitRuntimeService()
-backend = service.least_busy([
-    b for b in service.backends(simulator=False, operational=True)
-    if b.configuration().n_qubits >= qc.num_qubits
-])
+# Run circuit (defaults to AerSimulator, seed=42)
+counts_ct1, counts_ct2 = run_qsimcells_circuit(
+    ang_ct1, ang_ct2, interaction_map, n_shots=2000
+)
 
-# Run your circuit (simulated or device)
-counts1, counts2 = plot_measurement_histograms(qc, backend=backend)
+# Convert to binary cell × gene matrices
+mat_ct1 = create_binary_matrix(counts_ct1)  # shape (2000, 5)
+mat_ct2 = create_binary_matrix(counts_ct2)  # shape (2000, 5)
+```
+
+### Real IBM Quantum device run
+
+```python
+from qsim_cells.generative import run_qsimcells_circuit, get_best_quantum_backend
+import numpy as np
+
+# Load credentials saved via QiskitRuntimeService.save_account()
+backend = get_best_quantum_backend(required_qubits=10)
+
+counts_ct1, counts_ct2 = run_qsimcells_circuit(
+    ang_ct1, ang_ct2, interaction_map, n_shots=2000,
+    backend=backend, optimization_level=3
+)
+```
+
+### Low-level circuit construction
+
+```python
+from qsim_cells.generative import (
+    create_rotation_circuit,
+    concatenate_circuits_with_separate_measurements,
+    add_crx_and_measurements_to_circuit,
+)
+
+circ1    = create_rotation_circuit(ang_ct1)
+circ2    = create_rotation_circuit(ang_ct2)
+combined = concatenate_circuits_with_separate_measurements(circ1, circ2)
+final    = add_crx_and_measurements_to_circuit(combined, circ1.num_qubits, interaction_map)
 ```
 
 ---
@@ -192,18 +241,21 @@ barcodes = pd.read_csv("scmultisim_simulation/co_culture/barcodes.tsv", header=N
 ## Package Hierarchy
 
 - Core code modules:
-    - `qsim_cells/generative.py` — quantum simulation/synthetic data
-    - `qsim_cells/grn_utils.py`  — gene regulatory/network analysis
+    - `qsim_cells/generative.py` — quantum circuit construction, simulation, and sampling
+    - `qsim_cells/grn_utils.py`  — gene regulatory network analysis utilities
 
-- Main usage is shown in the notebook.
-- R pipeline (`r_cellchat_qsim/`) provides downstream/validation analysis.
+### Public API (`qsim_cells.generative`)
 
----
-
-## Main Entry Point
-
-**Main workflow:**  
-Jupyter notebook `qSim_cell_chat.ipynb`, simulating, merging, and visualizing single-cell quantum-inspired data.
+| Function | Description |
+|----------|-------------|
+| `run_qsimcells_circuit` | **Main entry point.** Build, transpile, and sample a two-register circuit. Returns `(counts_ct1, counts_ct2)`. |
+| `create_rotation_circuit` | Build an Ry rotation circuit for one cell type. |
+| `concatenate_circuits_with_separate_measurements` | Combine two cell-type circuits on disjoint registers. |
+| `add_crx_and_measurements_to_circuit` | Add CRX(θ) entangling gates and measure both registers. |
+| `create_binary_matrix` | Expand bitstring counts into a binary cell × gene matrix. |
+| `create_count_matrix_nbinom` | Convert binary activation to overdispersed counts via Negative Binomial. |
+| `plot_measurement_histograms` | Run a circuit and display side-by-side histograms for both registers. |
+| `get_best_quantum_backend` | Return the least-busy operational IBM backend with sufficient qubits. |
 
 ---
 
@@ -234,7 +286,3 @@ Pull requests, bug reports, and suggestions are welcome!
 
 This project is licensed under the MIT License.  
 See the [LICENSE](LICENSE) file for details.
-
----
-
-**Enjoy quantum-enhanced single-cell simulation and analysis! 🚀**
