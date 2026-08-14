@@ -1,9 +1,16 @@
 # qSimCells
 
-**Quantum-Inspired Single-Cell Data Simulation & Analysis Pipeline**  
-[Preprint: arXiv:2510.12776](https://www.arxiv.org/abs/2510.12776)
+**A Quantum Generative Framework for Simulating Single-Cell Transcriptomes with Gene–Gene and Cell–Cell Interactions**
+
+[![Paper](https://img.shields.io/badge/APL%20Quantum-10.1063%2F5.0317792-blue)](https://doi.org/10.1063/5.0317792)
+[![arXiv](https://img.shields.io/badge/arXiv-2510.12776-b31b1b)](https://arxiv.org/abs/2510.12776)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+📄 **Published:** Romero S., Kumar V. S., Chapkin R. S., Cai J. J. *Quantum generative modeling of single-cell transcriptomes: Capturing gene–gene and cell–cell interactions.* **APL Quantum 3**, 036106 (2026). [https://doi.org/10.1063/5.0317792](https://doi.org/10.1063/5.0317792)
 
 This project provides a Python package and Jupyter notebook workflows for simulating, merging, and benchmarking cell type interactions using classical and quantum computational models. It also includes downstream single-cell analysis and R/CellChat validation tools.
+
+The core idea: because the entanglement architecture of the circuit is programmed explicitly, qSimCells establishes a **known generative ground truth** for both gene regulatory networks and ligand–receptor communication — making it possible to test whether an inference method recovers real causal structure or merely statistical artifacts.
 
 ---
 
@@ -12,12 +19,12 @@ This project provides a Python package and Jupyter notebook workflows for simula
 - [Project Structure](#project-structure)
 - [Installation](#installation)
 - [Benchmark Packages](#benchmark-packages)
-- [IBM Quantum Setup (Optional)](#ibm-quantum-setup-optional)
+- [IBM Quantum Setup (Optional)](#ibm-quantum-setup-optional-for-hardware-usage)
 - [Running the Main Analysis & Simulation Workflow](#running-the-main-analysis--simulation-workflow)
 - [Using the Python Package in Your Own Code](#using-the-python-package-in-your-own-code)
 - [R Scripts](#r-scripts)
 - [Package Hierarchy](#package-hierarchy)
-- [Citation/Preprint](#citationpreprint)
+- [Citation](#citation)
 - [Contact](#contact)
 - [Contributing](#contributing)
 - [License](#license)
@@ -92,12 +99,12 @@ including the GRN inference and simulator packages.
 | `seaborn` | Benchmark figures |
 | `umap-learn`, `leidenalg` | UMAP + Leiden clustering in scanpy |
 
-> **Important — SERGIO install note:**  
-> `sergio_rs` is installed automatically from PyPI via `environment.yml`.  
-> Do **not** run `pip install sergio` manually — that installs an unrelated package.  
+> **Important — SERGIO install note:**
+> `sergio_rs` is installed automatically from PyPI via `environment.yml`.
+> Do **not** run `pip install sergio` manually — that installs an unrelated package.
 > Import in Python: `import sergio_rs`
 
-> **scMultiSim (R, required for full benchmark):**  
+> **scMultiSim (R, required for full benchmark):**
 > `simulator_benchmark.ipynb` calls the official scMultiSim R package via `Rscript`.
 > A minimal Python CIF implementation is used as a fallback when R is unavailable,
 > but it is **not** equivalent to the official scMultiSim — results will differ.
@@ -151,9 +158,20 @@ jupyter lab qSim_cell_chat.ipynb
 This notebook demonstrates the end-to-end workflow: quantum circuit simulation, matrix reconstruction, AnnData merging, and visualization.
 
 Other reproducible notebooks:
+
 - **`qSim_cell_benchmarks.ipynb`** — GRN benchmarking (4 methods × 2 cases × 10 seeds)
 - **`qSim_100k_convergence.ipynb`** — Convergence analysis at 100k shots
 - **`simulator_benchmark.ipynb`** — SERGIO vs qSimCells vs scMultiSim comparison
+
+### Reproducing the figures in the paper
+
+| Paper figure / result | Notebook |
+|---|---|
+| Main simulation + CellChat ligand–receptor recovery | `qSim_cell_chat.ipynb` |
+| GRN inference benchmark (correlation vs tree-based) | `qSim_cell_benchmarks.ipynb` |
+| Shot-count convergence (supplementary) | `qSim_100k_convergence.ipynb` |
+| Classical simulator comparison (supplementary) | `simulator_benchmark.ipynb` |
+| IBM hardware validation (supplementary) | `quantum_device_run/qSimCells_hardware_analysis.ipynb` |
 
 ---
 
@@ -230,6 +248,7 @@ Rscript scmultisim_benchmark.R scmultisim_simulation
 ```
 
 Read the outputs in Python:
+
 ```python
 import scipy.io, pandas as pd
 mat      = scipy.io.mmread("scmultisim_simulation/co_culture/matrix.mtx").T.toarray()
@@ -260,19 +279,38 @@ barcodes = pd.read_csv("scmultisim_simulation/co_culture/barcodes.tsv", header=N
 
 ---
 
-## Citation/Preprint
+## Citation
 
-If you use this pipeline in your research, please cite:
+If you use qSimCells in your research, please cite the published paper:
 
-> Selim Romero, et al.  
-> Quantum Generative Modeling of Single-Cell Transcriptomics: Capturing Gene-Gene and Cell-Cell Interactions.  
-> [arXiv:2510.12776](https://www.arxiv.org/abs/2510.12776)
+> Romero, S., Kumar, V. S., Chapkin, R. S., & Cai, J. J. (2026).
+> Quantum generative modeling of single-cell transcriptomes: Capturing gene–gene and cell–cell interactions.
+> *APL Quantum*, **3**(3), 036106. https://doi.org/10.1063/5.0317792
+
+BibTeX:
+
+```bibtex
+@article{romero2026qsimcells,
+  title   = {Quantum generative modeling of single-cell transcriptomes:
+             Capturing gene--gene and cell--cell interactions},
+  author  = {Romero, Selim and Kumar, Vignesh S. and
+             Chapkin, Robert S. and Cai, James J.},
+  journal = {APL Quantum},
+  volume  = {3},
+  number  = {3},
+  pages   = {036106},
+  year    = {2026},
+  doi     = {10.1063/5.0317792}
+}
+```
+
+A preprint version is also available at [arXiv:2510.12776](https://arxiv.org/abs/2510.12776).
 
 ---
 
 ## Contact
 
-Questions?  
+Questions?
 Open an issue or email **James J. Cai** (jcai@tamu.edu) | **Selim Romero** (ssromerogon@tamu.edu).
 
 ---
@@ -285,5 +323,5 @@ Pull requests, bug reports, and suggestions are welcome!
 
 ## License
 
-This project is licensed under the MIT License.  
+This project is licensed under the MIT License.
 See the [LICENSE](LICENSE) file for details.
